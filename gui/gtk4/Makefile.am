@@ -20,6 +20,7 @@ noinst_HEADERS=\
 
 libgwengui_gtk4_la_SOURCES=\
   gtk4_gui_dialog.c \
+  gtk4_gui_file_dialog.c \
   gtk4_gui.c
 
 
@@ -69,6 +70,6 @@ test_listbox_model_ownership_LDADD = libgwengui-gtk4.la $(GTK4_LIBS) \
   $(top_builddir)/src/$(gwenhywfar_internal_libname) \
   $(builddir)/../testdialogs/libgwengui-test.la
 
-test_file_dialog_path_SOURCES = test-file-dialog-path.c
+test_file_dialog_path_SOURCES = test-file-dialog-path.c gtk4_gui_file_dialog.c
 test_file_dialog_path_LDADD = libgwengui-gtk4.la $(GTK4_LIBS) \
   $(top_builddir)/src/$(gwenhywfar_internal_libname)

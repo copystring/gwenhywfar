@@ -67,62 +67,6 @@ Gtk4Gui_GetActiveWindow(void)
 }
 
 
-static int
-Gtk4Gui_IsDirectorySeparator(char c)
-{
-  return c=='/' || c=='\\';
-}
-
-
-void
-Gtk4Gui_FileDialog_PreparePath(GWEN_GUI_FILENAME_TYPE fnt,
-                               const char *path,
-                               char **initialFolder,
-                               char **initialName)
-{
-  const char *p;
-  const char *separator=NULL;
-
-  assert(initialFolder);
-  assert(initialName);
-  *initialFolder=NULL;
-  *initialName=NULL;
-
-  if (path==NULL || *path==0)
-    return;
-
-  /* A directory chooser has no filename field. Keep its complete path,
-   * including a root or a trailing separator, as the initial directory. */
-  if (fnt==GWEN_Gui_FileNameType_OpenDirectory) {
-    *initialFolder=g_strdup(path);
-    return;
-  }
-
-  for (p=path; *p; p++) {
-    if (Gtk4Gui_IsDirectorySeparator(*p))
-      separator=p;
-  }
-
-  if (separator==NULL) {
-    *initialName=g_strdup(path);
-    return;
-  }
-
-  if (separator[1]==0) {
-    *initialFolder=g_strdup(path);
-    return;
-  }
-
-  /* Keep the separator for POSIX and Windows filesystem roots. */
-  if (separator==path ||
-      (separator==path+2 && path[0] && path[1]==':'))
-    *initialFolder=g_strndup(path, separator-path+1);
-  else
-    *initialFolder=g_strndup(path, separator-path);
-  *initialName=g_strdup(separator+1);
-}
-
-
 static void
 Gtk4Gui_FileRequest_Free(GTK4_GUI_FILE_REQUEST *request)
 {
