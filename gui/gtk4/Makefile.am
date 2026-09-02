@@ -6,9 +6,10 @@ pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = gwengui-gtk4.pc
 
 lib_LTLIBRARIES=libgwengui-gtk4.la
+noinst_LTLIBRARIES=libgtk4-file-dialog.la
 
 
-libgwengui_gtk4_la_LIBADD=$(GTK4_LIBS) $(top_builddir)/src/$(gwenhywfar_internal_libname)
+libgwengui_gtk4_la_LIBADD=libgtk4-file-dialog.la $(GTK4_LIBS) $(top_builddir)/src/$(gwenhywfar_internal_libname)
 libgwengui_gtk4_la_LDFLAGS = -no-undefined -version-info \
    $(GWENHYWFAR_SO_CURRENT):$(GWENHYWFAR_SO_REVISION):$(GWENHYWFAR_SO_AGE)
 
@@ -20,8 +21,10 @@ noinst_HEADERS=\
 
 libgwengui_gtk4_la_SOURCES=\
   gtk4_gui_dialog.c \
-  gtk4_gui_file_dialog.c \
   gtk4_gui.c
+
+libgtk4_file_dialog_la_SOURCES=\
+  gtk4_gui_file_dialog.c
 
 
 EXTRA_DIST=\
@@ -70,6 +73,6 @@ test_listbox_model_ownership_LDADD = libgwengui-gtk4.la $(GTK4_LIBS) \
   $(top_builddir)/src/$(gwenhywfar_internal_libname) \
   $(builddir)/../testdialogs/libgwengui-test.la
 
-test_file_dialog_path_SOURCES = test-file-dialog-path.c gtk4_gui_file_dialog.c
-test_file_dialog_path_LDADD = libgwengui-gtk4.la $(GTK4_LIBS) \
+test_file_dialog_path_SOURCES = test-file-dialog-path.c
+test_file_dialog_path_LDADD = libgtk4-file-dialog.la libgwengui-gtk4.la $(GTK4_LIBS) \
   $(top_builddir)/src/$(gwenhywfar_internal_libname)
