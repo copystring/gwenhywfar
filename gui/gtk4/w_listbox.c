@@ -74,10 +74,9 @@ struct W_LISTBOX {
   GtkColumnView *view;
   GListStore *store;
   GtkSortListModel *sortModel;
-  GtkCustomSorter *sorter;
   GtkSelectionModel *selection;
   GPtrArray *headers;
-  GArray *sortDirections;
+  GHashTable *selectedItems;
   int selectionMode;
   int suppressSelectionChanged;
 };
@@ -86,40 +85,51 @@ struct W_LISTBOX {
 GWEN_INHERIT(GWEN_WIDGET, W_LISTBOX)
 
 
-static int Gtk4Gui_WListBox_CompareRows(gconstpointer first,
-                                        gconstpointer second,
-                                        gpointer data)
+static int Gtk4Gui_WListBox_CompareColumn(gconstpointer first,
+                                          gconstpointer second,
+                                          gpointer data)
 {
-  W_LISTBOX *xw=data;
   Gtk4GuiListBoxRow *firstRow=(Gtk4GuiListBoxRow *)first;
   Gtk4GuiListBoxRow *secondRow=(Gtk4GuiListBoxRow *)second;
-  guint i;
+  guint column=*((guint *)data);
 
-  for (i=0; i<xw->sortDirections->len; i++) {
-    int direction=g_array_index(xw->sortDirections, int, i);
-    int comparison;
-
-    if (direction==GWEN_DialogSortDirection_None)
-      continue;
-
-    comparison=g_utf8_collate(gtk4_gui_list_box_row_get_value(firstRow, i),
-                              gtk4_gui_list_box_row_get_value(secondRow, i));
-    if (comparison<0)
-      return direction==GWEN_DialogSortDirection_Down ? 1 : -1;
-    if (comparison>0)
-      return direction==GWEN_DialogSortDirection_Down ? -1 : 1;
-    return 0;
-  }
-
-  return 0;
+  return g_utf8_collate(gtk4_gui_list_box_row_get_value(firstRow, column),
+                        gtk4_gui_list_box_row_get_value(secondRow, column));
 }
 
 
 static void Gtk4Gui_WListBox_Resort(W_LISTBOX *xw)
 {
   xw->suppressSelectionChanged++;
-  gtk_sorter_changed(GTK_SORTER(xw->sorter), GTK_SORTER_CHANGE_DIFFERENT);
+  gtk_sorter_changed(gtk_column_view_get_sorter(xw->view), GTK_SORTER_CHANGE_DIFFERENT);
   xw->suppressSelectionChanged--;
+}
+
+
+static int Gtk4Gui_WListBox_GetSortColumn(W_LISTBOX *xw, GtkSortType *order)
+{
+  GtkColumnViewSorter *viewSorter;
+  GtkColumnViewColumn *primaryColumn;
+  GListModel *columns;
+  guint i;
+
+  viewSorter=GTK_COLUMN_VIEW_SORTER(gtk_column_view_get_sorter(xw->view));
+  primaryColumn=gtk_column_view_sorter_get_primary_sort_column(viewSorter);
+  if (primaryColumn==NULL)
+    return -1;
+
+  if (order)
+    *order=gtk_column_view_sorter_get_primary_sort_order(viewSorter);
+  columns=gtk_column_view_get_columns(xw->view);
+  for (i=0; i<g_list_model_get_n_items(columns); i++) {
+    GtkColumnViewColumn *column=g_list_model_get_item(columns, i);
+    gboolean matches=column==primaryColumn;
+
+    g_object_unref(column);
+    if (matches)
+      return (int)i;
+  }
+  return -1;
 }
 
 
@@ -144,21 +154,35 @@ static void Gtk4Gui_WListBox_SelectionChanged(GtkSelectionModel *model,
 {
   GWEN_WIDGET *w=data;
   W_LISTBOX *xw;
+  GHashTable *selectedItems;
+  gboolean hasNewSelection=FALSE;
   guint i;
 
   assert(w);
   xw=GWEN_INHERIT_GETDATA(GWEN_WIDGET, W_LISTBOX, w);
   assert(xw);
 
-  if (xw->suppressSelectionChanged)
-    return;
+  (void)position;
+  (void)n_items;
+  selectedItems=g_hash_table_new_full(g_direct_hash,
+                                      g_direct_equal,
+                                      g_object_unref,
+                                      NULL);
+  for (i=0; i<g_list_model_get_n_items(G_LIST_MODEL(model)); i++) {
+    GObject *item;
 
-  for (i=position; i<position+n_items; i++) {
-    if (gtk_selection_model_is_selected(model, i)) {
-      Gtk4Gui_WListBox_EmitActivated(w);
-      return;
-    }
+    if (!gtk_selection_model_is_selected(model, i))
+      continue;
+    item=g_list_model_get_item(G_LIST_MODEL(model), i);
+    if (!g_hash_table_contains(xw->selectedItems, item))
+      hasNewSelection=TRUE;
+    g_hash_table_add(selectedItems, item);
   }
+  g_hash_table_unref(xw->selectedItems);
+  xw->selectedItems=selectedItems;
+
+  if (!xw->suppressSelectionChanged && hasNewSelection)
+    Gtk4Gui_WListBox_EmitActivated(w);
 }
 
 
@@ -170,6 +194,7 @@ static void Gtk4Gui_WListBox_ClearSelectionModel(GWEN_WIDGET *w, W_LISTBOX *xw)
                                          w);
   gtk_column_view_set_model(xw->view, NULL);
   g_clear_object(&xw->selection);
+  g_hash_table_remove_all(xw->selectedItems);
 }
 
 
@@ -272,7 +297,11 @@ static void Gtk4Gui_WListBox_ClearValues(W_LISTBOX *xw)
 static void Gtk4Gui_WListBox_Rebuild(GWEN_WIDGET *w, W_LISTBOX *xw, const char *title)
 {
   gchar **parts;
+  GtkSortType sortOrder=GTK_SORT_ASCENDING;
+  int sortColumn;
   guint i;
+
+  sortColumn=Gtk4Gui_WListBox_GetSortColumn(xw, &sortOrder);
 
   g_ptr_array_set_size(xw->headers, 0);
   parts=g_strsplit(title, "\t", -1);
@@ -283,19 +312,19 @@ static void Gtk4Gui_WListBox_Rebuild(GWEN_WIDGET *w, W_LISTBOX *xw, const char *
   Gtk4Gui_WListBox_ClearColumns(xw);
   Gtk4Gui_WListBox_ClearSelectionModel(w, xw);
   g_clear_object(&xw->sortModel);
-  g_clear_object(&xw->sorter);
   g_clear_object(&xw->store);
   xw->store=g_list_store_new(gtk4_gui_list_box_row_get_type());
-  xw->sorter=gtk_custom_sorter_new(Gtk4Gui_WListBox_CompareRows, xw, NULL);
   xw->sortModel=gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(xw->store)),
-                                         GTK_SORTER(g_object_ref(xw->sorter)));
+                                         g_object_ref(gtk_column_view_get_sorter(xw->view)));
   gtk_sort_list_model_set_incremental(xw->sortModel, FALSE);
   Gtk4Gui_WListBox_SetSelectionModel(w, xw, xw->selectionMode);
 
   for (i=0; i<xw->headers->len; i++) {
     GtkListItemFactory *factory;
     GtkColumnViewColumn *column;
+    GtkSorter *sorter;
     guint *factoryColumn;
+    guint *sortColumnData;
 
     factory=gtk_signal_list_item_factory_new();
     factoryColumn=g_new(guint, 1);
@@ -310,14 +339,24 @@ static void Gtk4Gui_WListBox_Rebuild(GWEN_WIDGET *w, W_LISTBOX *xw, const char *
                      G_CALLBACK(Gtk4Gui_WListBox_FactoryBind),
                      factoryColumn);
     column=gtk_column_view_column_new(g_ptr_array_index(xw->headers, i), factory);
+    sortColumnData=g_new(guint, 1);
+    *sortColumnData=i;
+    sorter=GTK_SORTER(gtk_custom_sorter_new(Gtk4Gui_WListBox_CompareColumn,
+                                            sortColumnData,
+                                            g_free));
+    gtk_column_view_column_set_sorter(column, sorter);
+    g_object_unref(sorter);
     gtk_column_view_column_set_resizable(column, TRUE);
     gtk_column_view_append_column(xw->view, column);
     g_object_unref(column);
   }
 
-  g_array_set_size(xw->sortDirections, xw->headers->len);
-  for (i=0; i<xw->sortDirections->len; i++)
-    g_array_index(xw->sortDirections, int, i)=GWEN_DialogSortDirection_None;
+  if (sortColumn>=0 && (guint)sortColumn<xw->headers->len) {
+    GtkColumnViewColumn *column=Gtk4Gui_WListBox_GetColumn(xw, (guint)sortColumn);
+
+    gtk_column_view_sort_by_column(xw->view, column, sortOrder);
+    g_object_unref(column);
+  }
   GWEN_Widget_SetColumns(w, (int)xw->headers->len);
 }
 
@@ -380,19 +419,26 @@ int Gtk4Gui_WListBox_SetIntProperty(GWEN_WIDGET *w,
   }
 
   case GWEN_DialogProperty_SortDirection: {
-    guint i;
+    GtkColumnViewColumn *column;
 
-    if (index<0 || (guint)index>=xw->sortDirections->len)
+    if (index<0 || (column=Gtk4Gui_WListBox_GetColumn(xw, (guint)index))==NULL)
       return GWEN_ERROR_INVALID;
     if (value!=GWEN_DialogSortDirection_None &&
         value!=GWEN_DialogSortDirection_Up &&
-        value!=GWEN_DialogSortDirection_Down)
+        value!=GWEN_DialogSortDirection_Down) {
+      g_object_unref(column);
       return GWEN_ERROR_INVALID;
-    for (i=0; i<xw->sortDirections->len; i++)
-      g_array_index(xw->sortDirections, int, i)=GWEN_DialogSortDirection_None;
-    if (value!=GWEN_DialogSortDirection_None)
-      g_array_index(xw->sortDirections, int, index)=value;
-    Gtk4Gui_WListBox_Resort(xw);
+    }
+    xw->suppressSelectionChanged++;
+    if (value==GWEN_DialogSortDirection_None)
+      gtk_column_view_sort_by_column(xw->view, NULL, GTK_SORT_ASCENDING);
+    else
+      gtk_column_view_sort_by_column(xw->view,
+                                     column,
+                                     value==GWEN_DialogSortDirection_Down ?
+                                     GTK_SORT_DESCENDING : GTK_SORT_ASCENDING);
+    xw->suppressSelectionChanged--;
+    g_object_unref(column);
     return 0;
   }
 
@@ -457,9 +503,16 @@ int Gtk4Gui_WListBox_GetIntProperty(GWEN_WIDGET *w,
   }
 
   case GWEN_DialogProperty_SortDirection:
-    if (index<0 || (guint)index>=xw->sortDirections->len)
+    if (index<0 || (guint)index>=xw->headers->len)
       return GWEN_DialogSortDirection_None;
-    return g_array_index(xw->sortDirections, int, index);
+    {
+      GtkSortType order;
+
+      if (Gtk4Gui_WListBox_GetSortColumn(xw, &order)!=index)
+        return GWEN_DialogSortDirection_None;
+      return order==GTK_SORT_DESCENDING ?
+             GWEN_DialogSortDirection_Down : GWEN_DialogSortDirection_Up;
+    }
 
   default:
     break;
@@ -591,10 +644,9 @@ static void GWENHYWFAR_CB Gtk4Gui_WListBox_FreeData(void *bp, void *p)
                                          w);
   g_clear_object(&xw->selection);
   g_clear_object(&xw->sortModel);
-  g_clear_object(&xw->sorter);
   g_clear_object(&xw->store);
   g_clear_pointer(&xw->headers, g_ptr_array_unref);
-  g_clear_pointer(&xw->sortDirections, g_array_unref);
+  g_clear_pointer(&xw->selectedItems, g_hash_table_unref);
   GWEN_FREE_OBJECT(xw);
 }
 
@@ -609,13 +661,15 @@ int Gtk4Gui_WListBox_Setup(GWEN_WIDGET *w)
   GWEN_NEW_OBJECT(W_LISTBOX, xw);
   GWEN_INHERIT_SETDATA(GWEN_WIDGET, W_LISTBOX, w, xw, Gtk4Gui_WListBox_FreeData);
   xw->headers=g_ptr_array_new_with_free_func(g_free);
-  xw->sortDirections=g_array_new(FALSE, TRUE, sizeof(int));
-  xw->store=g_list_store_new(gtk4_gui_list_box_row_get_type());
-  xw->sorter=gtk_custom_sorter_new(Gtk4Gui_WListBox_CompareRows, xw, NULL);
-  xw->sortModel=gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(xw->store)),
-                                         GTK_SORTER(g_object_ref(xw->sorter)));
-  gtk_sort_list_model_set_incremental(xw->sortModel, FALSE);
+  xw->selectedItems=g_hash_table_new_full(g_direct_hash,
+                                          g_direct_equal,
+                                          g_object_unref,
+                                          NULL);
   xw->view=GTK_COLUMN_VIEW(gtk_column_view_new(NULL));
+  xw->store=g_list_store_new(gtk4_gui_list_box_row_get_type());
+  xw->sortModel=gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(xw->store)),
+                                         g_object_ref(gtk_column_view_get_sorter(xw->view)));
+  gtk_sort_list_model_set_incremental(xw->sortModel, FALSE);
   Gtk4Gui_WListBox_SetSelectionModel(w, xw, GWEN_Dialog_SelectionMode_Single);
 
   scroll=gtk_scrolled_window_new();
