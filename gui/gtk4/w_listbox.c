@@ -238,10 +238,17 @@ static void Gtk4Gui_WListBox_SetSelectionModel(GWEN_WIDGET *w, W_LISTBOX *xw, in
     selection=GTK_SELECTION_MODEL(gtk_multi_selection_new(G_LIST_MODEL(g_object_ref(xw->sortModel))));
     break;
   case GWEN_Dialog_SelectionMode_Single:
-  default:
+  default: {
+    GtkSingleSelection *singleSelection;
+
     mode=GWEN_Dialog_SelectionMode_Single;
-    selection=GTK_SELECTION_MODEL(gtk_single_selection_new(G_LIST_MODEL(g_object_ref(xw->sortModel))));
+    singleSelection=gtk_single_selection_new(NULL);
+    gtk_single_selection_set_autoselect(singleSelection, FALSE);
+    gtk_single_selection_set_can_unselect(singleSelection, TRUE);
+    gtk_single_selection_set_model(singleSelection, G_LIST_MODEL(xw->sortModel));
+    selection=GTK_SELECTION_MODEL(singleSelection);
     break;
+  }
   }
 
   gtk_column_view_set_model(xw->view, selection);
@@ -320,7 +327,7 @@ int Gtk4Gui_WListBox_SetIntProperty(GWEN_WIDGET *w,
                                     GWEN_DIALOG_PROPERTY prop,
                                     int index,
                                     int value,
-                                    GWEN_UNUSED int doSignal)
+                                    int doSignal)
 {
   GtkWidget *g;
   W_LISTBOX *xw;
@@ -341,19 +348,16 @@ int Gtk4Gui_WListBox_SetIntProperty(GWEN_WIDGET *w,
     return 0;
 
   case GWEN_DialogProperty_Value: {
-    GtkBitset *selected;
-    GtkBitset *mask;
     gboolean success;
     guint count=g_list_model_get_n_items(G_LIST_MODEL(xw->selection));
 
     if (value<0 || (guint)value>=count)
       return GWEN_ERROR_INVALID;
-    selected=gtk_bitset_new_empty();
-    mask=gtk_bitset_new_range(0, count);
-    gtk_bitset_add(selected, (guint)value);
-    success=gtk_selection_model_set_selection(xw->selection, selected, mask);
-    gtk_bitset_unref(selected);
-    gtk_bitset_unref(mask);
+    if (!doSignal)
+      xw->suppressSelectionChanged++;
+    success=gtk_selection_model_select_item(xw->selection, (guint)value, TRUE);
+    if (!doSignal)
+      xw->suppressSelectionChanged--;
     return success ? 0 : GWEN_ERROR_INVALID;
   }
 

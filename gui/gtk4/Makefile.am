@@ -66,12 +66,16 @@ libtest_SOURCES = libtest.c
 libtest_LDADD = libgwengui-gtk4.la $(GTK4_LIBS) $(top_builddir)/src/$(gwenhywfar_internal_libname) \
   $(builddir)/../testdialogs/libgwengui-test.la
 
-check_PROGRAMS = test-listbox-model-ownership test-file-dialog-path test-combobox-properties
-TESTS = test-listbox-model-ownership test-file-dialog-path test-combobox-properties
+check_PROGRAMS = test-listbox-model-ownership test-listbox-properties test-file-dialog-path test-combobox-properties
+TESTS = test-listbox-model-ownership test-listbox-properties test-file-dialog-path test-combobox-properties
 test_listbox_model_ownership_SOURCES = test-listbox-model-ownership.c
 test_listbox_model_ownership_LDADD = libgwengui-gtk4.la $(GTK4_LIBS) \
   $(top_builddir)/src/$(gwenhywfar_internal_libname) \
   $(builddir)/../testdialogs/libgwengui-test.la
+
+test_listbox_properties_SOURCES = test-listbox-properties.c
+test_listbox_properties_LDADD = libgwengui-gtk4.la $(GTK4_LIBS) \
+  $(top_builddir)/src/$(gwenhywfar_internal_libname)
 
 test_file_dialog_path_SOURCES = test-file-dialog-path.c
 test_file_dialog_path_LDADD = libgtk4-file-dialog.la libgwengui-gtk4.la $(GTK4_LIBS) \
