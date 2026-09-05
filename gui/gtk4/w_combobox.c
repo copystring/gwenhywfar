@@ -35,6 +35,19 @@ static void Gtk4Gui_WComboBox_EmitActivated(GWEN_WIDGET *w)
 }
 
 
+static void Gtk4Gui_WComboBox_BeginSync(W_COMBOBOX *xw)
+{
+  xw->syncing++;
+}
+
+
+static void Gtk4Gui_WComboBox_EndSync(W_COMBOBOX *xw)
+{
+  assert(xw->syncing>0);
+  xw->syncing--;
+}
+
+
 static void Gtk4Gui_WComboBox_SetEntryFromSelection(W_COMBOBOX *xw)
 {
   guint selected;
@@ -51,9 +64,9 @@ static void Gtk4Gui_WComboBox_SetEntryFromSelection(W_COMBOBOX *xw)
   if (text==NULL)
     return;
 
-  xw->syncing=1;
+  Gtk4Gui_WComboBox_BeginSync(xw);
   gtk_editable_set_text(GTK_EDITABLE(xw->entry), text);
-  xw->syncing=0;
+  Gtk4Gui_WComboBox_EndSync(xw);
 }
 
 
@@ -91,16 +104,17 @@ static void entry_changed_handler(GtkEditable *entry, gpointer data)
 }
 
 
-static void Gtk4Gui_WComboBox_Clear(W_COMBOBOX *xw)
+static void Gtk4Gui_WComboBox_Clear(W_COMBOBOX *xw, int doSignal)
 {
   guint count;
 
+  if (!doSignal)
+    Gtk4Gui_WComboBox_BeginSync(xw);
   count=g_list_model_get_n_items(G_LIST_MODEL(xw->model));
-  while (count>0) {
-    count--;
-    gtk_string_list_remove(xw->model, count);
-  }
   GWEN_StringList_Clear(xw->entries);
+  gtk_string_list_splice(xw->model, 0, count, NULL);
+  if (!doSignal)
+    Gtk4Gui_WComboBox_EndSync(xw);
 }
 
 
@@ -109,7 +123,7 @@ int Gtk4Gui_WComboBox_SetIntProperty(GWEN_WIDGET *w,
                                      GWEN_DIALOG_PROPERTY prop,
                                      GWEN_UNUSED int index,
                                      int value,
-                                     GWEN_UNUSED int doSignal)
+                                     int doSignal)
 {
   GtkWidget *g;
   W_COMBOBOX *xw;
@@ -131,14 +145,18 @@ int Gtk4Gui_WComboBox_SetIntProperty(GWEN_WIDGET *w,
     return 0;
 
   case GWEN_DialogProperty_Value:
+    if (!doSignal)
+      Gtk4Gui_WComboBox_BeginSync(xw);
     if (value<0 || (guint)value>=g_list_model_get_n_items(G_LIST_MODEL(xw->model)))
       gtk_drop_down_set_selected(xw->dropDown, GTK_INVALID_LIST_POSITION);
     else
       gtk_drop_down_set_selected(xw->dropDown, (guint)value);
+    if (!doSignal)
+      Gtk4Gui_WComboBox_EndSync(xw);
     return 0;
 
   case GWEN_DialogProperty_ClearValues:
-    Gtk4Gui_WComboBox_Clear(xw);
+    Gtk4Gui_WComboBox_Clear(xw, doSignal);
     return 0;
 
   default:
@@ -199,7 +217,7 @@ int Gtk4Gui_WComboBox_SetCharProperty(GWEN_WIDGET *w,
                                       GWEN_DIALOG_PROPERTY prop,
                                       GWEN_UNUSED int index,
                                       const char *value,
-                                      GWEN_UNUSED int doSignal)
+                                      int doSignal)
 {
   W_COMBOBOX *xw;
 
@@ -212,13 +230,20 @@ int Gtk4Gui_WComboBox_SetCharProperty(GWEN_WIDGET *w,
     /* The legacy backend deliberately did not define text assignment. */
     return 0;
 
-  case GWEN_DialogProperty_AddValue:
-    gtk_string_list_append(xw->model, value ? value : "");
-    GWEN_StringList_AppendString(xw->entries, value ? value : "", 0, 0);
+  case GWEN_DialogProperty_AddValue: {
+    const char *text=value ? value : "";
+
+    /* GtkDropDown selects the first appended item synchronously. Keep that
+     * implementation detail from escaping as a Gwen activation. */
+    Gtk4Gui_WComboBox_BeginSync(xw);
+    GWEN_StringList_AppendString(xw->entries, text, 0, 0);
+    gtk_string_list_append(xw->model, text);
+    Gtk4Gui_WComboBox_EndSync(xw);
     return 0;
+  }
 
   case GWEN_DialogProperty_ClearValues:
-    Gtk4Gui_WComboBox_Clear(xw);
+    Gtk4Gui_WComboBox_Clear(xw, doSignal);
     return 0;
 
   default:
